@@ -76,6 +76,7 @@ void updateLEDs(int score) {
 
 void setup() {
   Serial.begin(9600);
+  delay(2000)
   Wire.begin();
   
   pinMode(LED_GOOD, OUTPUT);

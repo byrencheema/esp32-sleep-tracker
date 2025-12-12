@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <HttpClient.h>
 #include <Adafruit_AHTX0.h>
 
 #define LIGHT_SENSOR_PIN 33
@@ -9,32 +11,36 @@
 
 Adafruit_AHTX0 aht;
 
+// WiFi credentials
+char ssid[] = "Antonio_iPhone";
+char pass[] = "6c905uddqwp9g";
+
+// Server details (update with your AWS IP)
+const char serverIP[] = "3.22.233.94";  // Your AWS instance IP
+const int serverPort = 5000;
+
 // Ideal sleep conditions
 const float IDEAL_TEMP = 22.0;
 const float IDEAL_HUMIDITY = 45.0;
-const int IDEAL_LIGHT = 500;  // Adjust based on your readings
+const int IDEAL_LIGHT = 500;
 
 int calculateComfortScore(float temp, float humidity, int lightLevel, bool motion) {
   int score = 100;
   
-  // Temperature penalty (±3°C is acceptable)
   float tempDiff = abs(temp - IDEAL_TEMP);
   if (tempDiff > 3.0) {
     score -= (tempDiff - 3.0) * 10;
   }
   
-  // Humidity penalty (±15% is acceptable)
   float humidDiff = abs(humidity - IDEAL_HUMIDITY);
   if (humidDiff > 15.0) {
     score -= (humidDiff - 15.0) * 2;
   }
   
-  // Light penalty (should be dark for sleep)
   if (lightLevel > IDEAL_LIGHT) {
     score -= (lightLevel - IDEAL_LIGHT) / 20;
   }
   
-  // Motion penalty (restlessness during sleep)
   if (motion) {
     score -= 15;
   }
@@ -47,12 +53,10 @@ void updateLEDs(int score) {
   static bool blinkState = false;
   
   if (score >= 70) {
-    // Good conditions - solid on LED_GOOD
     digitalWrite(LED_GOOD, HIGH);
     digitalWrite(LED_POOR, LOW);
   }
   else if (score >= 40) {
-    // Fair - slow blink on LED_GOOD (1 Hz)
     if (millis() - lastBlink > 1000) {
       blinkState = !blinkState;
       lastBlink = millis();
@@ -61,7 +65,6 @@ void updateLEDs(int score) {
     digitalWrite(LED_POOR, LOW);
   }
   else {
-    // Poor - fast blink on LED_POOR (4 Hz)
     if (millis() - lastBlink > 250) {
       blinkState = !blinkState;
       lastBlink = millis();
@@ -79,15 +82,23 @@ void setup() {
   pinMode(LED_POOR, OUTPUT);
   pinMode(PIR_SENSOR_PIN, INPUT);
   
+  // Connect to WiFi
+  WiFi.begin(ssid, pass);
+  Serial.print("Connecting to WiFi ");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+  
   if (!aht.begin()) {
     Serial.println("AHT20 sensor not found!");
     while (1);
   }
   
   Serial.println("Sleep Monitor Ready");
-  Serial.println("Temp | Humidity | Light | Motion | Score");
-  
-  // Give PIR sensor time to calibrate
   Serial.println("Calibrating PIR sensor (30 sec)...");
   delay(30000);
   Serial.println("Ready!");
@@ -115,5 +126,27 @@ void loop() {
                 motionDetected ? "MOTION" : "Still",
                 comfortScore);
   
+  // Send data to server
+  WiFiClient client;
+  HttpClient http(client);
+  
+  String path = "/?temp=" + String(temp.temperature, 1) + 
+                "&hum=" + String(humidity.relative_humidity, 1) +
+                "&light=" + String(lightLevel) +
+                "&motion=" + String(motionDetected ? 1 : 0) +
+                "&score=" + String(comfortScore);
+  
+  int err = http.get(serverIP, serverPort, path.c_str(), NULL);
+  
+  if (err == 0) {
+    Serial.println("Data sent to server!");
+    http.responseStatusCode();
+    http.skipResponseHeaders();
+  } else {
+    Serial.print("Send failed: ");
+    Serial.println(err);
+  }
+  
+  http.stop();
   delay(2000);
 }
